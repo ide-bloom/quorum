@@ -9,6 +9,10 @@ or the network.
 
 Tier 1, M1 (foundations). Anything not described here has not been built yet.
 
+Two items from M17 were brought forward after review: the CI workflow and the
+determinism demo. They add no distributed behaviour and do not change what M1
+implements; the milestone plan itself is unchanged.
+
 ## Layering
 
 ```
@@ -27,6 +31,36 @@ layout), so `pyproject.toml` adds both `src` and `.` to the import path.
 Two small files were added to the layout: `runtime/state_machine.py` holds the
 application state machine protocol, and `runtime/trace.py` holds `TraceSink`
 and `NullSink`. The latter is what keeps the dependency direction one-way.
+
+## Decisions and tradeoffs
+
+- **Simulator before consensus.** A cluster that fails once and cannot be
+  reproduced teaches very little. Injecting time, randomness, network and disk
+  first means every later failure has a seed and a trace, so M2 onward can be
+  tested rather than demonstrated.
+- **Protocols, not implementations, at the core.** A Raft node will only see
+  `Clock`, `Transport`, `StorageIO`, `StateMachine` and `TraceSink`. That costs
+  a few small interfaces up front, but the same node can run under the simulator
+  now and under a TCP transport in M17 without changes.
+- **Visible vs durable bytes.** `MemoryStorageIO` keeps two images of each file.
+  It is not a real filesystem, but it turns "persist before reply" into
+  something a test can break instead of a comment in the code.
+- **JSON frames.** Length-prefixed JSON is larger than a binary codec and slower
+  to parse. It is worth it here because traces are readable, frames are easy to
+  label, and `Transport` deals in opaque bytes, so the codec can be replaced
+  later without touching any node code.
+- **Decisions at send time.** Drops, duplicates and delays are chosen when a
+  message is sent and recorded with a reason. That gives M7 explicit events to
+  minimize, at the cost of not modelling faults that arise mid-flight apart from
+  a receiver crash.
+- **`sim/` outside the package.** Keeps the one-way dependency `core <- sim`;
+  the price is a two-root import path and the `TraceSink` protocol.
+- **Sharp edges before M2.** `Log.append_after()` truncates the suffix
+  unconditionally; M3's AppendEntries handler must compare terms and call it
+  only on a conflicting suffix, or it would violate "never truncate matching
+  entries" (§5.3). `MemoryStorageIO` models torn appends but loses unsynced
+  overwrites, and `unlink()` takes effect immediately, so M4 crash tests must
+  not assume directory-fsync ordering is covered yet.
 
 ## Determinism rules
 
